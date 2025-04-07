@@ -8,13 +8,14 @@ from unitree_sdk2py.core.channel import ChannelFactoryInitialize
 from unitree_sdk2py_bridge import UnitreeSdk2Bridge, ElasticBand
 
 import config
-
+import rclpy
 
 locker = threading.Lock()
 
 mj_model = mujoco.MjModel.from_xml_path(config.ROBOT_SCENE)
 mj_data = mujoco.MjData(mj_model)
 
+# TODO Hier Option für Headless mode
 
 if config.ENABLE_ELASTIC_BAND:
     elastic_band = ElasticBand()
@@ -42,7 +43,19 @@ def SimulationThread():
     unitree = UnitreeSdk2Bridge(mj_model, mj_data)
 
     if config.USE_JOYSTICK:
-        unitree.SetupJoystick(device_id=0, js_type=config.JOYSTICK_TYPE)
+        if config.JOYSTICK_TYPE == "ros2_hands":
+            rclpy.init()  # ADDED: Initialize ROS2
+            node = rclpy.create_node("unitree_sdk2_bridge_node")
+            unitree.setup_ros2_joystick(node)
+            unitree.setup_ros2_hand_cmd(node)
+            unitree.setup_ros2_arm_cmd(node)
+            # Start a separate thread for spinning the ROS2 node
+            ros2_thread = Thread(target=rclpy.spin, args=(node,))
+            ros2_thread.daemon = True
+            ros2_thread.start()
+        else:
+            unitree.SetupJoystick(device_id=config.JOYSTICK_DEVICE, js_type=config.JOYSTICK_TYPE)
+
     if config.PRINT_SCENE_INFORMATION:
         unitree.PrintSceneInformation()
 
