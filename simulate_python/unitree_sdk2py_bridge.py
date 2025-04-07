@@ -5,6 +5,7 @@ import sys
 import struct
 import rclpy
 from sensor_msgs.msg import Joy
+from trajectory_msgs.msg import JointTrajectory, JointTrajectoryPoint
 
 from unitree_sdk2py.core.channel import ChannelSubscriber, ChannelPublisher
 from unitree_sdk2py.idl.unitree_go.msg.dds_ import SportModeState_
@@ -197,12 +198,12 @@ class UnitreeSdk2Bridge:
                             for key in [
                                 int(self.joystick.get_hat(0)[0] < 0),  # left
                                 int(self.joystick.get_hat(0)[1] < 0),  # down
-                                int(self.joystick.get_hat(0)[0] > 0), # right
-                                int(self.joystick.get_hat(0)[1] > 0),    # up
-                                int(self.joystick.get_button(self.button_id["Y"])),     # Y
-                                int(self.joystick.get_button(self.button_id["X"])),     # X
-                                int(self.joystick.get_button(self.button_id["B"])),     # B
-                                int(self.joystick.get_button(self.button_id["A"])),     # A
+                                int(self.joystick.get_hat(0)[0] > 0),  # right
+                                int(self.joystick.get_hat(0)[1] > 0),  # up
+                                int(self.joystick.get_button(self.button_id["Y"])),  # Y
+                                int(self.joystick.get_button(self.button_id["X"])),  # X
+                                int(self.joystick.get_button(self.button_id["B"])),  # B
+                                int(self.joystick.get_button(self.button_id["A"])),  # A
                             ]
                         ]
                     ),
@@ -264,7 +265,65 @@ class UnitreeSdk2Bridge:
         """
         node.create_subscription(Joy, '/joy', self.ros2_joystick_callback, 10)
 
-    # --- Modified PublishWirelessController method ---
+    # New ROS2 subscriptions for hand and arm commands ---
+    def setup_ros2_hand_cmd(self, node):
+        """
+        Set up a ROS2 subscription for hand joint trajectory commands.
+        """
+        node.create_subscription(JointTrajectory, '/dex3_hand_controller/command', self.HandCmdHandler, 10)
+
+    def setup_ros2_arm_cmd(self, node):
+        """
+        Set up a ROS2 subscription for arm joint trajectory commands.
+        """
+        node.create_subscription(JointTrajectory, '/arm_controller/command', self.ArmCmdHandler, 10)
+
+    def HandCmdHandler(self, msg: JointTrajectory):
+        """
+        ROS2 callback to process hand joint trajectory commands.
+        Maps incoming joint commands to simulation control values.
+        """
+        if not msg.points:
+            return
+        positions = msg.points[0].positions
+        # Map hand joint names to simulation actuator indices
+        # NOTE: REPLACE the indices with the actual indices for your g1 robot hand in the simulation.
+        hand_joint_mapping = {
+            "thumb_j0": 0,   # MODIFIED: Replace with actual index
+            "thumb_j1": 1,   # MODIFIED: Replace with actual index
+            "thumb_j2": 2,   # MODIFIED: Replace with actual index
+            "index_j0": 3,   # MODIFIED: Replace with actual index
+            "index_j1": 4,   # MODIFIED: Replace with actual index
+            "middle_j0": 5,  # MODIFIED: Replace with actual index
+            "middle_j1": 6,  # MODIFIED: Replace with actual index
+        }
+        for i, name in enumerate(msg.joint_names):
+            if name in hand_joint_mapping and i < len(positions):
+                joint_idx = hand_joint_mapping[name]
+                self.mj_data.ctrl[joint_idx] = positions[i]  # Update control command
+
+    def ArmCmdHandler(self, msg: JointTrajectory):
+        """
+        ROS2 callback to process arm joint trajectory commands.
+        Maps incoming joint commands to simulation control values.
+        """
+        if not msg.points:
+            return
+        positions = msg.points[0].positions
+        # Map arm joint names to simulation actuator indices.
+        # NOTE: REPLACE these indices with the actual indices for your g1 robot arm in the simulation.
+        arm_joint_mapping = {
+            "shoulder_yaw": 7,     # MODIFIED: Replace with actual index
+            "shoulder_pitch": 8,   # MODIFIED: Replace with actual index
+            "shoulder_roll": 9,    # MODIFIED: Replace with actual index
+            "elbow": 10,           # MODIFIED: Replace with actual index
+            "wrist": 11,           # MODIFIED: Replace with actual index
+        }
+        for i, name in enumerate(msg.joint_names):
+            if name in arm_joint_mapping and i < len(positions):
+                joint_idx = arm_joint_mapping[name]
+                self.mj_data.ctrl[joint_idx] = positions[i]  # MODIFIED: Update control command
+
     def PublishWirelessController(self):
         """
         Publish wireless controller signals.
