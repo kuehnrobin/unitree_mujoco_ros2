@@ -125,7 +125,20 @@ class UnitreeSdk2Bridge:
 
     def PublishLowState(self):
         if self.mj_data is not None:
+            # Check if sensor data is large enough for motor data
+            expected_motor_data = 3 * self.num_motor
+            if len(self.mj_data.sensordata) < expected_motor_data:
+                print("PublishLowState: sensor data length ({}) is less than expected motor data length ({})".format(
+                    len(self.mj_data.sensordata), expected_motor_data))
+                return
+
             for i in range(self.num_motor):
+                # Guard each index access for motor state
+                if (i >= len(self.mj_data.sensordata) or 
+                    (i + self.num_motor) >= len(self.mj_data.sensordata) or 
+                    (i + 2 * self.num_motor) >= len(self.mj_data.sensordata)):
+                    print("PublishLowState: index out of range for motor {}".format(i))
+                    continue
                 self.low_state.motor_state[i].q = self.mj_data.sensordata[i]
                 self.low_state.motor_state[i].dq = self.mj_data.sensordata[
                     i + self.num_motor
@@ -135,42 +148,46 @@ class UnitreeSdk2Bridge:
                 ]
 
             if self.have_frame_sensor_:
+                # Check if sensor data is large enough for IMU (indices: dim_motor_sensor+0 .. +9)
+                if len(self.mj_data.sensordata) < self.dim_motor_sensor + 10:
+                    print("PublishLowState: sensor data length ({}) is less than required for IMU ({} required)".format(
+                        len(self.mj_data.sensordata), self.dim_motor_sensor + 10))
+                else:
+                    self.low_state.imu_state.quaternion[0] = self.mj_data.sensordata[
+                        self.dim_motor_sensor + 0
+                    ]
+                    self.low_state.imu_state.quaternion[1] = self.mj_data.sensordata[
+                        self.dim_motor_sensor + 1
+                    ]
+                    self.low_state.imu_state.quaternion[2] = self.mj_data.sensordata[
+                        self.dim_motor_sensor + 2
+                    ]
+                    self.low_state.imu_state.quaternion[3] = self.mj_data.sensordata[
+                        self.dim_motor_sensor + 3
+                    ]
 
-                self.low_state.imu_state.quaternion[0] = self.mj_data.sensordata[
-                    self.dim_motor_sensor + 0
-                ]
-                self.low_state.imu_state.quaternion[1] = self.mj_data.sensordata[
-                    self.dim_motor_sensor + 1
-                ]
-                self.low_state.imu_state.quaternion[2] = self.mj_data.sensordata[
-                    self.dim_motor_sensor + 2
-                ]
-                self.low_state.imu_state.quaternion[3] = self.mj_data.sensordata[
-                    self.dim_motor_sensor + 3
-                ]
+                    self.low_state.imu_state.gyroscope[0] = self.mj_data.sensordata[
+                        self.dim_motor_sensor + 4
+                    ]
+                    self.low_state.imu_state.gyroscope[1] = self.mj_data.sensordata[
+                        self.dim_motor_sensor + 5
+                    ]
+                    self.low_state.imu_state.gyroscope[2] = self.mj_data.sensordata[
+                        self.dim_motor_sensor + 6
+                    ]
 
-                self.low_state.imu_state.gyroscope[0] = self.mj_data.sensordata[
-                    self.dim_motor_sensor + 4
-                ]
-                self.low_state.imu_state.gyroscope[1] = self.mj_data.sensordata[
-                    self.dim_motor_sensor + 5
-                ]
-                self.low_state.imu_state.gyroscope[2] = self.mj_data.sensordata[
-                    self.dim_motor_sensor + 6
-                ]
-
-                self.low_state.imu_state.accelerometer[0] = self.mj_data.sensordata[
-                    self.dim_motor_sensor + 7
-                ]
-                self.low_state.imu_state.accelerometer[1] = self.mj_data.sensordata[
-                    self.dim_motor_sensor + 8
-                ]
-                self.low_state.imu_state.accelerometer[2] = self.mj_data.sensordata[
-                    self.dim_motor_sensor + 9
-                ]
+                    self.low_state.imu_state.accelerometer[0] = self.mj_data.sensordata[
+                        self.dim_motor_sensor + 7
+                    ]
+                    self.low_state.imu_state.accelerometer[1] = self.mj_data.sensordata[
+                        self.dim_motor_sensor + 8
+                    ]
+                    self.low_state.imu_state.accelerometer[2] = self.mj_data.sensordata[
+                        self.dim_motor_sensor + 9
+                    ]
             # Check if change is needed
             # ---------------------
-            if self.joystick != None:
+            if self.joystick is not None:
                 pygame.event.get()
                 # Buttons
                 self.low_state.wireless_remote[2] = int(
@@ -225,27 +242,21 @@ class UnitreeSdk2Bridge:
             self.low_state_puber.Write(self.low_state)
 
     def PublishHighState(self):
-
         if self.mj_data is not None:
-            self.high_state.position[0] = self.mj_data.sensordata[
-                self.dim_motor_sensor + 10
-            ]
-            self.high_state.position[1] = self.mj_data.sensordata[
-                self.dim_motor_sensor + 11
-            ]
-            self.high_state.position[2] = self.mj_data.sensordata[
-                self.dim_motor_sensor + 12
-            ]
+            # Ensure sensor data is long enough for high state indices
+            required_index = self.dim_motor_sensor + 15
+            if len(self.mj_data.sensordata) <= required_index:
+                print("PublishHighState: sensor data length ({}) is less than required index {}".format(
+                    len(self.mj_data.sensordata), required_index))
+                return
 
-            self.high_state.velocity[0] = self.mj_data.sensordata[
-                self.dim_motor_sensor + 13
-            ]
-            self.high_state.velocity[1] = self.mj_data.sensordata[
-                self.dim_motor_sensor + 14
-            ]
-            self.high_state.velocity[2] = self.mj_data.sensordata[
-                self.dim_motor_sensor + 15
-            ]
+            self.high_state.position[0] = self.mj_data.sensordata[self.dim_motor_sensor + 10]
+            self.high_state.position[1] = self.mj_data.sensordata[self.dim_motor_sensor + 11]
+            self.high_state.position[2] = self.mj_data.sensordata[self.dim_motor_sensor + 12]
+
+            self.high_state.velocity[0] = self.mj_data.sensordata[self.dim_motor_sensor + 13]
+            self.high_state.velocity[1] = self.mj_data.sensordata[self.dim_motor_sensor + 14]
+            self.high_state.velocity[2] = self.mj_data.sensordata[self.dim_motor_sensor + 15]
 
         self.high_state_puber.Write(self.high_state)
 
@@ -265,7 +276,7 @@ class UnitreeSdk2Bridge:
         """
         node.create_subscription(Joy, '/joy', self.ros2_joystick_callback, 10)
 
-    # New ROS2 subscriptions for hand and arm commands ---
+    # --- New ROS2 subscriptions for hand and arm commands ---
     def setup_ros2_hand_cmd(self, node):
         """
         Set up a ROS2 subscription for hand joint trajectory commands.
@@ -322,7 +333,7 @@ class UnitreeSdk2Bridge:
         for i, name in enumerate(msg.joint_names):
             if name in arm_joint_mapping and i < len(positions):
                 joint_idx = arm_joint_mapping[name]
-                self.mj_data.ctrl[joint_idx] = positions[i]  # MODIFIED: Update control command
+                self.mj_data.ctrl[joint_idx] = positions[i]  # Update control command
 
     def PublishWirelessController(self):
         """
