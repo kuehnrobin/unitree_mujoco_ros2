@@ -3,9 +3,10 @@ import numpy as np
 import pygame
 import sys
 import struct
+import rclpy
+from sensor_msgs.msg import Joy
 
 from unitree_sdk2py.core.channel import ChannelSubscriber, ChannelPublisher
-
 from unitree_sdk2py.idl.unitree_go.msg.dds_ import SportModeState_
 from unitree_sdk2py.idl.unitree_go.msg.dds_ import WirelessController_
 from unitree_sdk2py.idl.default import unitree_go_msg_dds__SportModeState_
@@ -32,7 +33,6 @@ NUM_MOTOR_IDL_GO = 20
 NUM_MOTOR_IDL_HG = 35
 
 class UnitreeSdk2Bridge:
-
     def __init__(self, mj_model, mj_data):
         self.mj_model = mj_model
         self.mj_data = mj_data
@@ -42,9 +42,10 @@ class UnitreeSdk2Bridge:
         self.have_imu = False
         self.have_frame_sensor = False
         self.dt = self.mj_model.opt.timestep
-        self.idl_type = (self.num_motor > NUM_MOTOR_IDL_GO) # 0: unitree_go, 1: unitree_hg
+        self.idl_type = (self.num_motor > NUM_MOTOR_IDL_GO)  # 0: unitree_go, 1: unitree_hg
 
         self.joystick = None
+        self.latest_joy = None  # For ROS2 joystick messages
 
         # Check sensor
         for i in range(self.dim_motor_sensor, self.mj_model.nsensor):
@@ -88,7 +89,6 @@ class UnitreeSdk2Bridge:
         self.low_cmd_suber = ChannelSubscriber(TOPIC_LOWCMD, LowCmd_)
         self.low_cmd_suber.Init(self.LowCmdHandler, 10)
 
-        # joystick
         self.key_map = {
             "R1": 0,
             "L1": 1,
@@ -109,7 +109,7 @@ class UnitreeSdk2Bridge:
         }
 
     def LowCmdHandler(self, msg: LowCmd_):
-        if self.mj_data != None:
+        if self.mj_data is not None:
             for i in range(self.num_motor):
                 self.mj_data.ctrl[i] = (
                     msg.motor_cmd[i].tau
@@ -123,7 +123,7 @@ class UnitreeSdk2Bridge:
                 )
 
     def PublishLowState(self):
-        if self.mj_data != None:
+        if self.mj_data is not None:
             for i in range(self.num_motor):
                 self.low_state.motor_state[i].q = self.mj_data.sensordata[i]
                 self.low_state.motor_state[i].dq = self.mj_data.sensordata[
@@ -167,7 +167,8 @@ class UnitreeSdk2Bridge:
                 self.low_state.imu_state.accelerometer[2] = self.mj_data.sensordata[
                     self.dim_motor_sensor + 9
                 ]
-
+            # Check if change is needed
+            # ---------------------
             if self.joystick != None:
                 pygame.event.get()
                 # Buttons
@@ -219,12 +220,12 @@ class UnitreeSdk2Bridge:
                 self.low_state.wireless_remote[8:12] = packs[1]
                 self.low_state.wireless_remote[12:16] = packs[2]
                 self.low_state.wireless_remote[20:24] = packs[3]
-
+            # ---------------------
             self.low_state_puber.Write(self.low_state)
 
     def PublishHighState(self):
 
-        if self.mj_data != None:
+        if self.mj_data is not None:
             self.high_state.position[0] = self.mj_data.sensordata[
                 self.dim_motor_sensor + 10
             ]
@@ -247,8 +248,64 @@ class UnitreeSdk2Bridge:
 
         self.high_state_puber.Write(self.high_state)
 
+    # --- New ROS2 joystick interface methods ---
+
+    def ros2_joystick_callback(self, msg: Joy):
+        """
+        ROS2 callback to update the latest joystick message.
+        """
+        self.latest_joy = msg
+
+    def setup_ros2_joystick(self, node):
+        """
+        Set up a ROS2 subscription for joystick signals.
+        The node provided must be an instance of rclpy.node.Node.
+        Joystick signals are expected on the '/joy' topic with message type sensor_msgs/Joy.
+        """
+        node.create_subscription(Joy, '/joy', self.ros2_joystick_callback, 10)
+
+    # --- Modified PublishWirelessController method ---
     def PublishWirelessController(self):
-        if self.joystick != None:
+        """
+        Publish wireless controller signals.
+        If a ROS2 joystick message is available (self.latest_joy), use its data.
+        Otherwise, fall back to the pygame joystick (if available).
+        """
+        # Check for ROS2 joystick data first.
+        if self.latest_joy is not None:
+            joy = self.latest_joy
+            key_state = [0] * 16
+            # Use button indices from your mapping (assumed similar to xbox layout)
+            key_state[self.key_map["R1"]] = joy.buttons[self.button_id["RB"]] if hasattr(self, "button_id") else 0
+            key_state[self.key_map["L1"]] = joy.buttons[self.button_id["LB"]] if hasattr(self, "button_id") else 0
+            key_state[self.key_map["start"]] = joy.buttons[self.button_id["START"]] if hasattr(self, "button_id") else 0
+            key_state[self.key_map["select"]] = joy.buttons[self.button_id["SELECT"]] if hasattr(self, "button_id") else 0
+            key_state[self.key_map["R2"]] = 1 if joy.axes[self.axis_id["RT"]] > 0 else 0 if hasattr(self, "axis_id") else 0
+            key_state[self.key_map["L2"]] = 1 if joy.axes[self.axis_id["LT"]] > 0 else 0 if hasattr(self, "axis_id") else 0
+            key_state[self.key_map["F1"]] = 0
+            key_state[self.key_map["F2"]] = 0
+            key_state[self.key_map["A"]] = joy.buttons[self.button_id["A"]] if hasattr(self, "button_id") else 0
+            key_state[self.key_map["B"]] = joy.buttons[self.button_id["B"]] if hasattr(self, "button_id") else 0
+            key_state[self.key_map["X"]] = joy.buttons[self.button_id["X"]] if hasattr(self, "button_id") else 0
+            key_state[self.key_map["Y"]] = joy.buttons[self.button_id["Y"]] if hasattr(self, "button_id") else 0
+            # If no hat information is provided by Joy, set directional keys to 0.
+            key_state[self.key_map["up"]] = 0
+            key_state[self.key_map["right"]] = 0
+            key_state[self.key_map["down"]] = 0
+            key_state[self.key_map["left"]] = 0
+
+            key_value = 0
+            for i in range(16):
+                key_value |= (key_state[i] << i)
+            self.wireless_controller.keys = key_value
+            self.wireless_controller.lx = joy.axes[self.axis_id["LX"]] if hasattr(self, "axis_id") else 0.0
+            self.wireless_controller.ly = -joy.axes[self.axis_id["LY"]] if hasattr(self, "axis_id") else 0.0
+            self.wireless_controller.rx = joy.axes[self.axis_id["RX"]] if hasattr(self, "axis_id") else 0.0
+            self.wireless_controller.ry = -joy.axes[self.axis_id["RY"]] if hasattr(self, "axis_id") else 0.0
+
+            self.wireless_controller_puber.Write(self.wireless_controller)
+        elif self.joystick is not None:
+            # Fall back to pygame joystick if no ROS2 data.
             pygame.event.get()
             key_state = [0] * 16
             key_state[self.key_map["R1"]] = self.joystick.get_button(
@@ -291,7 +348,8 @@ class UnitreeSdk2Bridge:
             self.wireless_controller.ry = -self.joystick.get_axis(self.axis_id["RY"])
 
             self.wireless_controller_puber.Write(self.wireless_controller)
-
+        # If neither source is available, do nothing.
+        
     def SetupJoystick(self, device_id=0, js_type="xbox"):
         pygame.init()
         pygame.joystick.init()
@@ -349,7 +407,7 @@ class UnitreeSdk2Bridge:
                 "START": 11,
             }
         else:
-            print("Unsupported gamepad. ")
+            print("Unsupported gamepad.")
 
     def PrintSceneInformation(self):
         print(" ")
